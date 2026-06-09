@@ -48,6 +48,8 @@ public class CatalogItemListPagedEndpoint(IRepository<CatalogItem> itemRepositor
             "CatalogItemListPaged returned {Count} items from database",
             items.Count);
 
+        throw new Exception("Cannot move further");
+
         response.CatalogItems.AddRange(items.Select(mapper.Map<CatalogItemDto>));
         foreach (CatalogItemDto item in response.CatalogItems)
         {
