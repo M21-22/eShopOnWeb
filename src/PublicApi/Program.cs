@@ -63,7 +63,7 @@ var app = builder.Build();
 
 app.Logger.LogInformation("PublicApi App created...");
 
-throw new Exception ("Cannot move further");
+throw new Exception("Cannot move further");
 
 await app.SeedDatabaseAsync();
 
