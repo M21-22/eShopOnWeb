@@ -86,7 +86,7 @@ app.UseSwaggerGen();
 
 app.Logger.LogInformation("LAUNCHING PublicApi");
 
-throw new System.Exception("Cannot move further");
+// throw new System.Exception("Cannot move further");
 
 app.Run();
 
