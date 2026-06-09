@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 
 namespace Microsoft.Extensions.Hosting;
 // Adds common .NET Aspire services: service discovery, resilience, health checks, and OpenTelemetry.
