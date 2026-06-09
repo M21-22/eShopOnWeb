@@ -14,7 +14,7 @@ namespace Microsoft.eShopWeb.PublicApi.CatalogItemEndpoints;
 /// List Catalog Items (paged)
 /// </summary>
 public class CatalogItemListPagedEndpoint(IRepository<CatalogItem> itemRepository, IUriComposer uriComposer,
-        AutoMapper.IMapper mapper)
+        AutoMapper.IMapper mapper, ILogger<CatalogItemListPagedEndpoint> logger)
     : Endpoint<ListPagedCatalogItemRequest, ListPagedCatalogItemResponse>
 {
     public override void Configure()
@@ -42,6 +42,10 @@ public class CatalogItemListPagedEndpoint(IRepository<CatalogItem> itemRepositor
             typeId: request.CatalogTypeId);
 
         var items = await itemRepository.ListAsync(pagedSpec, ct);
+
+        logger.LogInformation(
+            "CatalogItemListPaged returned {Count} items from database",
+            items.Count);
 
         response.CatalogItems.AddRange(items.Select(mapper.Map<CatalogItemDto>));
         foreach (CatalogItemDto item in response.CatalogItems)
