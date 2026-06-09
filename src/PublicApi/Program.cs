@@ -63,8 +63,6 @@ var app = builder.Build();
 
 app.Logger.LogInformation("PublicApi App created...");
 
-throw new System.Exception("Cannot move further");
-
 await app.SeedDatabaseAsync();
 
 if (app.Environment.IsDevelopment())
@@ -87,6 +85,9 @@ app.UseFastEndpoints();
 app.UseSwaggerGen();
 
 app.Logger.LogInformation("LAUNCHING PublicApi");
+
+throw new System.Exception("Cannot move further");
+
 app.Run();
 
 public partial class Program { }
