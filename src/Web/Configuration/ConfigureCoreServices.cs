@@ -25,6 +25,12 @@ public static class ConfigureCoreServices
         services.AddScoped(typeof(IAppLogger<>), typeof(LoggerAdapter<>));
         services.AddTransient<IEmailSender, LoggerEmailSender>();
 
+        services.AddHttpClient<IOrderItemsReserverClient, OrderItemsReserverClient>(client =>
+        {
+            client.BaseAddress = new Uri(
+                configuration["OrderItemsReserverUrl"]!);
+        });
+
         return services;
     }
 }
