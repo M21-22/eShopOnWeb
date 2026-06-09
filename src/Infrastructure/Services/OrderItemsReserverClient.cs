@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -18,6 +19,11 @@ public class OrderItemsReserverClient : IOrderItemsReserverClient
 
     public async Task ReserveAsync(Order order)
     {
+        if (_httpClient.BaseAddress is null)
+        {
+            return;
+        }
+
         var payload = new
         {
             orderId = order.Id,

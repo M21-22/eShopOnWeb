@@ -27,9 +27,13 @@ public static class ConfigureCoreServices
 
         services.AddHttpClient<IOrderItemsReserverClient, OrderItemsReserverClient>(client =>
         {
-            client.BaseAddress = new Uri(
-                configuration["OrderItemsReserverUrl"]!);
-        });
+            var url = configuration["OrderItemsReserverUrl"];
+
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                client.BaseAddress = new Uri(url);
+            }
+        }); 
 
         return services;
     }
