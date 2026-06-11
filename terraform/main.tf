@@ -1,4 +1,3 @@
-# terraform apply -var="sql_admin_password=PASSWORD"
 terraform {
   required_version = ">= 1.6.0"
 
@@ -7,7 +6,6 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
     }
-
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
@@ -19,31 +17,28 @@ provider "azurerm" {
   features {}
 }
 
-variable "sql_admin_login" {
-  type    = string
-  default = "sqladminuser"
-}
+data "azurerm_client_config" "current" {}
 
-variable "sql_admin_password" {
-  type      = string
-  sensitive = true
+variable "sql_connection_string" {
+  description = "Azure SQL connection string used by CatalogConnection and IdentityConnection. Do not commit the real value; pass it through terraform.tfvars or -var."
+  type        = string
+  sensitive   = true
 }
 
 locals {
-  prefix         = "eshop"
-  rg_name        = "rg-eshop"
-  primary_region = "West Europe"
-  second_region  = "France Central"
-
-  # Use another allowed region if your subscription blocks SQL/Cosmos in the primary region.
-  data_region = "West US 2"
-
+  prefix  = "eshop"
+  rg_name = "rg-eshop"
   api_url = "https://${azurerm_windows_web_app.publicapi.default_hostname}"
 
-  sql_connection_string = "Server=tcp:${azurerm_mssql_server.sql.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.eshop.name};Persist Security Info=False;User ID=${var.sql_admin_login};Password=${var.sql_admin_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+  db_connection_key_vault_reference = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.db_connection_string.versionless_id})"
 
-  reserve_order_items_url      = "https://${azurerm_windows_function_app.orderitems.default_hostname}/api/ReserveOrderItems?code=${data.azurerm_function_app_host_keys.orderitems.default_function_key}"
-  delivery_order_processor_url = "https://${azurerm_windows_function_app.orderitems.default_hostname}/api/DeliveryOrderProcessor?code=${data.azurerm_function_app_host_keys.orderitems.default_function_key}"
+  common_app_settings = {
+    "UseOnlyInMemoryDatabase"           = "false"
+    "ASPNETCORE_ENVIRONMENT"           = "Development"
+    "SCM_DO_BUILD_DURING_DEPLOYMENT"   = "false"
+    "ConnectionStrings__CatalogConnection"  = local.db_connection_key_vault_reference
+    "ConnectionStrings__IdentityConnection" = local.db_connection_key_vault_reference
+  }
 }
 
 resource "random_string" "suffix" {
@@ -54,17 +49,14 @@ resource "random_string" "suffix" {
 
 resource "azurerm_resource_group" "rg" {
   name     = local.rg_name
-  location = local.primary_region
+  location = "West Europe"
 }
 
-# -------------------------
 # App Service Plans
-# -------------------------
-
 resource "azurerm_service_plan" "west" {
   name                = "asp-eshop-west"
   resource_group_name = azurerm_resource_group.rg.name
-  location            = local.primary_region
+  location            = "West Europe"
   os_type             = "Windows"
   sku_name            = "S1"
 }
@@ -72,166 +64,49 @@ resource "azurerm_service_plan" "west" {
 resource "azurerm_service_plan" "central" {
   name                = "asp-eshop-central"
   resource_group_name = azurerm_resource_group.rg.name
-  location            = local.second_region
+  location            = "France Central"
   os_type             = "Windows"
   sku_name            = "B1"
 }
 
-resource "azurerm_service_plan" "functions" {
-  name                = "asp-eshop-functions"
+# Key Vault for SQL connection string
+resource "azurerm_key_vault" "sql" {
+  name                = "eshop-sql-kv-${random_string.suffix.result}"
   resource_group_name = azurerm_resource_group.rg.name
-  location            = local.primary_region
-  os_type             = "Windows"
-  sku_name            = "Y1"
+  location            = azurerm_resource_group.rg.location
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  sku_name            = "standard"
+
+  enable_rbac_authorization = true
 }
 
-# -------------------------
-# Azure SQL
-# -------------------------
-
-resource "azurerm_mssql_server" "sql" {
-  name                         = "eshop-sqlserver-${random_string.suffix.result}"
-  resource_group_name          = azurerm_resource_group.rg.name
-  location                     = local.data_region
-  version                      = "12.0"
-  administrator_login          = var.sql_admin_login
-  administrator_login_password = var.sql_admin_password
+resource "azurerm_role_assignment" "current_user_key_vault_secrets_officer" {
+  scope                = azurerm_key_vault.sql.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = data.azurerm_client_config.current.object_id
 }
 
-resource "azurerm_mssql_firewall_rule" "allow_azure_services" {
-  name             = "AllowAzureServices"
-  server_id        = azurerm_mssql_server.sql.id
-  start_ip_address = "0.0.0.0"
-  end_ip_address   = "0.0.0.0"
-}
-
-resource "azurerm_mssql_database" "eshop" {
-  name                        = "eShopOnWebDb"
-  server_id                   = azurerm_mssql_server.sql.id
-  sku_name                    = "GP_S_Gen5_1"
-  min_capacity                = 0.5
-  auto_pause_delay_in_minutes = 60
-  max_size_gb                 = 32
-  zone_redundant              = false
-}
-
-# -------------------------
-# Storage for ReserveOrderItems Function
-# -------------------------
-
-resource "azurerm_storage_account" "functions" {
-  name                     = "eshopfuncsa${random_string.suffix.result}"
-  resource_group_name      = azurerm_resource_group.rg.name
-  location                 = local.primary_region
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
-}
-
-resource "azurerm_storage_container" "order_requests" {
-  name                  = "order-requests"
-  storage_account_id    = azurerm_storage_account.functions.id
-  container_access_type = "private"
-}
-
-# -------------------------
-# Cosmos DB for DeliveryOrderProcessor Function
-# -------------------------
-
-resource "azurerm_cosmosdb_account" "delivery" {
-  name                = "eshop-delivery-cosmos-${random_string.suffix.result}"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = local.data_region
-  offer_type          = "Standard"
-  kind                = "GlobalDocumentDB"
-
-  capabilities {
-    name = "EnableServerless"
-  }
-
-  consistency_policy {
-    consistency_level = "Session"
-  }
-
-  geo_location {
-    location          = local.data_region
-    failover_priority = 0
-  }
-
-  backup {
-    type                = "Periodic"
-    interval_in_minutes = 240
-    retention_in_hours  = 8
-  }
-}
-
-resource "azurerm_cosmosdb_sql_database" "delivery" {
-  name                = "DeliveryDb"
-  resource_group_name = azurerm_resource_group.rg.name
-  account_name        = azurerm_cosmosdb_account.delivery.name
-}
-
-resource "azurerm_cosmosdb_sql_container" "orders" {
-  name                = "Orders"
-  resource_group_name = azurerm_resource_group.rg.name
-  account_name        = azurerm_cosmosdb_account.delivery.name
-  database_name       = azurerm_cosmosdb_sql_database.delivery.name
-  partition_key_paths = ["/orderId"]
-}
-
-# -------------------------
-# Function App
-# Contains:
-# - ReserveOrderItems -> Blob Storage
-# - DeliveryOrderProcessor -> Cosmos DB
-# -------------------------
-
-resource "azurerm_windows_function_app" "orderitems" {
-  name                       = "orderitemsreserver-func-${random_string.suffix.result}"
-  resource_group_name        = azurerm_resource_group.rg.name
-  location                   = local.primary_region
-  service_plan_id            = azurerm_service_plan.functions.id
-  storage_account_name       = azurerm_storage_account.functions.name
-  storage_account_access_key = azurerm_storage_account.functions.primary_access_key
-  functions_extension_version = "~4"
-
-  site_config {
-    application_stack {
-      dotnet_version              = "v8.0"
-      use_dotnet_isolated_runtime = true
-    }
-  }
-
-  app_settings = {
-    "FUNCTIONS_WORKER_RUNTIME" = "dotnet-isolated"
-
-    "BlobStorageConnectionString" = azurerm_storage_account.functions.primary_connection_string
-    "BlobContainerName"           = azurerm_storage_container.order_requests.name
-
-    "CosmosDbConnection" = azurerm_cosmosdb_account.delivery.primary_sql_connection_string
-    "CosmosDbDatabase"   = azurerm_cosmosdb_sql_database.delivery.name
-    "CosmosDbContainer"  = azurerm_cosmosdb_sql_container.orders.name
-  }
-}
-
-data "azurerm_function_app_host_keys" "orderitems" {
-  name                = azurerm_windows_function_app.orderitems.name
-  resource_group_name = azurerm_resource_group.rg.name
+resource "azurerm_key_vault_secret" "db_connection_string" {
+  name         = "DbConnectionString"
+  value        = var.sql_connection_string
+  key_vault_id = azurerm_key_vault.sql.id
 
   depends_on = [
-    azurerm_windows_function_app.orderitems
+    azurerm_role_assignment.current_user_key_vault_secrets_officer
   ]
 }
 
-# -------------------------
 # Public API
-# -------------------------
-
 resource "azurerm_windows_web_app" "publicapi" {
   name                = "eshop-publicapi-${random_string.suffix.result}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_service_plan.west.location
   service_plan_id     = azurerm_service_plan.west.id
 
+  identity {
+    type = "SystemAssigned"
+  }
+
   site_config {
     application_stack {
       current_stack  = "dotnet"
@@ -239,26 +114,20 @@ resource "azurerm_windows_web_app" "publicapi" {
     }
   }
 
-  app_settings = {
-    "UseOnlyInMemoryDatabase"        = "false"
-    "ASPNETCORE_ENVIRONMENT"        = "Development"
-    "SCM_DO_BUILD_DURING_DEPLOYMENT" = "false"
-
-    "ConnectionStrings__CatalogConnection"  = local.sql_connection_string
-    "ConnectionStrings__IdentityConnection" = local.sql_connection_string
-  }
+  app_settings = local.common_app_settings
 }
 
-# -------------------------
-# Web App - West Europe
-# -------------------------
-
+# Web app - West Europe
 resource "azurerm_windows_web_app" "web_west" {
   name                = "eshop-web-west-${random_string.suffix.result}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_service_plan.west.location
   service_plan_id     = azurerm_service_plan.west.id
 
+  identity {
+    type = "SystemAssigned"
+  }
+
   site_config {
     application_stack {
       current_stack  = "dotnet"
@@ -266,30 +135,22 @@ resource "azurerm_windows_web_app" "web_west" {
     }
   }
 
-  app_settings = {
-    "UseOnlyInMemoryDatabase"        = "false"
-    "ASPNETCORE_ENVIRONMENT"        = "Development"
-    "baseUrls__apiBase"             = local.api_url
-    "SCM_DO_BUILD_DURING_DEPLOYMENT" = "false"
-
-    "ConnectionStrings__CatalogConnection"  = local.sql_connection_string
-    "ConnectionStrings__IdentityConnection" = local.sql_connection_string
-
-    "OrderItemsReserverUrl"      = local.reserve_order_items_url
-    "DeliveryOrderProcessorUrl"  = local.delivery_order_processor_url
-  }
+  app_settings = merge(local.common_app_settings, {
+    "baseUrls__apiBase" = local.api_url
+  })
 }
 
-# -------------------------
-# Web App - France Central
-# -------------------------
-
+# Web app - France Central
 resource "azurerm_windows_web_app" "web_central" {
   name                = "eshop-web-central-${random_string.suffix.result}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_service_plan.central.location
   service_plan_id     = azurerm_service_plan.central.id
 
+  identity {
+    type = "SystemAssigned"
+  }
+
   site_config {
     application_stack {
       current_stack  = "dotnet"
@@ -297,28 +158,20 @@ resource "azurerm_windows_web_app" "web_central" {
     }
   }
 
-  app_settings = {
-    "UseOnlyInMemoryDatabase"        = "false"
-    "ASPNETCORE_ENVIRONMENT"        = "Development"
-    "baseUrls__apiBase"             = local.api_url
-    "SCM_DO_BUILD_DURING_DEPLOYMENT" = "false"
-
-    "ConnectionStrings__CatalogConnection"  = local.sql_connection_string
-    "ConnectionStrings__IdentityConnection" = local.sql_connection_string
-
-    "OrderItemsReserverUrl"      = local.reserve_order_items_url
-    "DeliveryOrderProcessorUrl"  = local.delivery_order_processor_url
-  }
+  app_settings = merge(local.common_app_settings, {
+    "baseUrls__apiBase" = local.api_url
+  })
 }
 
-# -------------------------
-# Deployment Slot for Web West
-# -------------------------
-
+# Deployment slot for Web West
 resource "azurerm_windows_web_app_slot" "web_west_staging" {
   name           = "staging"
   app_service_id = azurerm_windows_web_app.web_west.id
 
+  identity {
+    type = "SystemAssigned"
+  }
+
   site_config {
     application_stack {
       current_stack  = "dotnet"
@@ -326,24 +179,37 @@ resource "azurerm_windows_web_app_slot" "web_west_staging" {
     }
   }
 
-  app_settings = {
-    "UseOnlyInMemoryDatabase"        = "false"
-    "ASPNETCORE_ENVIRONMENT"        = "Development"
-    "baseUrls__apiBase"             = local.api_url
-    "SCM_DO_BUILD_DURING_DEPLOYMENT" = "false"
-
-    "ConnectionStrings__CatalogConnection"  = local.sql_connection_string
-    "ConnectionStrings__IdentityConnection" = local.sql_connection_string
-
-    "OrderItemsReserverUrl"      = local.reserve_order_items_url
-    "DeliveryOrderProcessorUrl"  = local.delivery_order_processor_url
-  }
+  app_settings = merge(local.common_app_settings, {
+    "baseUrls__apiBase" = local.api_url
+  })
 }
 
-# -------------------------
-# Traffic Manager
-# -------------------------
+# Allow App Service managed identities to read the SQL connection string secret.
+resource "azurerm_role_assignment" "publicapi_key_vault_secrets_user" {
+  scope                = azurerm_key_vault.sql.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_windows_web_app.publicapi.identity[0].principal_id
+}
 
+resource "azurerm_role_assignment" "web_west_key_vault_secrets_user" {
+  scope                = azurerm_key_vault.sql.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_windows_web_app.web_west.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "web_central_key_vault_secrets_user" {
+  scope                = azurerm_key_vault.sql.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_windows_web_app.web_central.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "web_west_staging_key_vault_secrets_user" {
+  scope                = azurerm_key_vault.sql.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_windows_web_app_slot.web_west_staging.identity[0].principal_id
+}
+
+# Traffic Manager
 resource "azurerm_traffic_manager_profile" "tm" {
   name                   = "eshop-tm-${random_string.suffix.result}"
   resource_group_name    = azurerm_resource_group.rg.name
@@ -377,10 +243,7 @@ resource "azurerm_traffic_manager_azure_endpoint" "web_central" {
   weight             = 100
 }
 
-# -------------------------
-# Autoscale
-# -------------------------
-
+# Autoscale for the west App Service Plan, where Public API is deployed.
 resource "azurerm_monitor_autoscale_setting" "api_autoscale" {
   name                = "asp-eshop-west-autoscale"
   resource_group_name = azurerm_resource_group.rg.name
@@ -439,10 +302,6 @@ resource "azurerm_monitor_autoscale_setting" "api_autoscale" {
   }
 }
 
-# -------------------------
-# Outputs
-# -------------------------
-
 output "public_api_url" {
   value = "https://${azurerm_windows_web_app.publicapi.default_hostname}"
 }
@@ -459,26 +318,6 @@ output "traffic_manager_url" {
   value = "https://${azurerm_traffic_manager_profile.tm.fqdn}"
 }
 
-output "function_app_name" {
-  value = azurerm_windows_function_app.orderitems.name
-}
-
-output "sql_server_name" {
-  value = azurerm_mssql_server.sql.name
-}
-
-output "sql_database_name" {
-  value = azurerm_mssql_database.eshop.name
-}
-
-output "cosmos_account_name" {
-  value = azurerm_cosmosdb_account.delivery.name
-}
-
-output "cosmos_database_name" {
-  value = azurerm_cosmosdb_sql_database.delivery.name
-}
-
-output "cosmos_container_name" {
-  value = azurerm_cosmosdb_sql_container.orders.name
+output "key_vault_name" {
+  value = azurerm_key_vault.sql.name
 }
