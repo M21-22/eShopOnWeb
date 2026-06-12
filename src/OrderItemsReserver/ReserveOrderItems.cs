@@ -78,8 +78,6 @@ public class ReserveOrderItems
                 await Task.Delay(TimeSpan.FromSeconds(2));
             }
         }
-
-        _logger.LogInformation("Order request uploaded to Blob Storage: {FileName}", fileName);
     }
 }
 
