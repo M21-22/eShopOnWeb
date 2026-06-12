@@ -6,20 +6,23 @@ using System.Threading.Tasks;
 using Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 using Microsoft.Extensions.Configuration;
+using Azure.Messaging.ServiceBus;
+using System.Text.Json;
 
 namespace Microsoft.eShopWeb.Infrastructure.Services;
 
 public class OrderItemsReserverClient : IOrderItemsReserverClient
 {
     private readonly HttpClient _httpClient;
-    private readonly string? _orderItemsReserverUrl;
     private readonly string? _deliveryOrderProcessorUrl;
+    private readonly string? _serviceBusConnectionString;
+    private readonly string _queueName = "order-items-reservation";
 
     public OrderItemsReserverClient(HttpClient httpClient, IConfiguration configuration)
     {
         _httpClient = httpClient;
-        _orderItemsReserverUrl = configuration["OrderItemsReserverUrl"];
         _deliveryOrderProcessorUrl = configuration["DeliveryOrderProcessorUrl"];
+        _serviceBusConnectionString = configuration["ServiceBusConnection"];
     }
 
     public async Task ReserveAsync(Order order)
@@ -55,10 +58,13 @@ public class OrderItemsReserverClient : IOrderItemsReserverClient
             finalPrice = order.Total()
         };
 
-        if (!string.IsNullOrWhiteSpace(_orderItemsReserverUrl))
+        if (!string.IsNullOrWhiteSpace(_serviceBusConnectionString))
         {
-            var reserveResponse = await _httpClient.PostAsJsonAsync(_orderItemsReserverUrl, reservePayload);
-            reserveResponse.EnsureSuccessStatusCode();
+            await using var client = new ServiceBusClient(_serviceBusConnectionString);
+            ServiceBusSender sender = client.CreateSender(_queueName);
+
+            var messageJson = JsonSerializer.Serialize(reservePayload);
+            await sender.SendMessageAsync(new ServiceBusMessage(messageJson));
         }
 
         if (!string.IsNullOrWhiteSpace(_deliveryOrderProcessorUrl))
