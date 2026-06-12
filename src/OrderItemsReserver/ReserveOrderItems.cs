@@ -53,7 +53,31 @@ public class ReserveOrderItems
         var fileName = $"order-{orderRequest.OrderId}-{DateTime.UtcNow:yyyyMMddHHmmss}.json";
         var blobClient = containerClient.GetBlobClient(fileName);
 
-        await blobClient.UploadAsync(BinaryData.FromString(message), overwrite: true);
+        const int maxAttempts = 3;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                await blobClient.UploadAsync(BinaryData.FromString(message), overwrite: true);
+
+                _logger.LogInformation(
+                    "Order request uploaded to Blob Storage on attempt {Attempt}: {FileName}",
+                    attempt,
+                    fileName);
+
+                break;
+            }
+            catch (Exception ex) when (attempt < maxAttempts)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Blob upload failed on attempt {Attempt}. Retrying...",
+                    attempt);
+
+                await Task.Delay(TimeSpan.FromSeconds(2));
+            }
+        }
 
         _logger.LogInformation("Order request uploaded to Blob Storage: {FileName}", fileName);
     }
