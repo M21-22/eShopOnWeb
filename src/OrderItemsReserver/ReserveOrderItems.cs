@@ -22,11 +22,11 @@ public class ReserveOrderItems
         _logger.LogInformation("ReserveOrderItems received message from Service Bus.");
 
         var storageConnectionString =
-            Environment.GetEnvironmentVariable("BlobStorageConnection");
+            Environment.GetEnvironmentVariable("BlobStorageConnectionString");
 
         if (string.IsNullOrWhiteSpace(storageConnectionString))
         {
-            throw new InvalidOperationException("BlobStorageConnection is missing.");
+            throw new InvalidOperationException("BlobStorageConnectionString is missing.");
         }
 
         var containerName =
