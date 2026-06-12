@@ -1,7 +1,7 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy dotnet core app to Azure Function App - orderitemsreserver-func
+name: Build and deploy dotnet core app to Azure Function App - deliveryorderprocessor-func
 
 on:
   push:
@@ -10,8 +10,8 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_NAME: 'orderitemsreserver-func'
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: './src/OrderItemsReserver' # set this to the path to your web app project, defaults to the repository root
+  AZURE_FUNCTIONAPP_NAME: 'deliveryorderprocessor-func'
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: './src/DeliveryOrderProcessor' # set this to the path to your web app project, defaults to the repository root
   DOTNET_VERSION: '8.0.x' # set this to the dotnet version to use
 
 jobs:
@@ -33,22 +33,22 @@ jobs:
       - name: 'Resolve Project Dependencies Using Dotnet'
         shell: pwsh
         run: |
-          pushd './${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}'
-          dotnet build OrderItemsReserver.csproj --configuration Release --output ./output
+          pushd '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}'
+          dotnet build DeliveryOrderProcessor.csproj --configuration Release --output ./output
           popd
       
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_AEFA5BE72DA94ADBA0B456AD20BFD764 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_67545B5625DD4ACBA30EAE4A0B255C83 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_F9B79DCB4CDB46DC8A4D4FA08FAA9A3D }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_59A9623BCE2349A186A2A88C7491C395 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_7336C8478A1B49C1855CD92D34EDD2CC }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_22E00B52BCF44089BFE95C5C616B6EBC }}
 
       - name: 'Run Azure Functions Action'
         uses: Azure/functions-action@v1
         id: fa
         with:
-          app-name: 'orderitemsreserver-func'
+          app-name: 'deliveryorderprocessor-func'
           slot-name: 'Production'
           package: '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/output'
           
