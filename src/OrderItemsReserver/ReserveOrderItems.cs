@@ -1,7 +1,6 @@
-using System.Net;
+using System.Text.Json;
 using Azure.Storage.Blobs;
 using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 
 namespace OrderItemsReserver;
@@ -16,31 +15,58 @@ public class ReserveOrderItems
     }
 
     [Function("ReserveOrderItems")]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post")]
-        HttpRequestData req)
+    public async Task Run(
+        [ServiceBusTrigger("order-items-reservation", Connection = "ServiceBusConnection")]
+        string message)
     {
-        var body = await new StreamReader(req.Body).ReadToEndAsync();
+        _logger.LogInformation("ReserveOrderItems received message from Service Bus.");
 
-        var connectionString =
-            Environment.GetEnvironmentVariable("BlobStorageConnectionString");
+        var storageConnectionString =
+            Environment.GetEnvironmentVariable("BlobStorageConnection");
+
+        if (string.IsNullOrWhiteSpace(storageConnectionString))
+        {
+            throw new InvalidOperationException("BlobStorageConnection is missing.");
+        }
 
         var containerName =
-            Environment.GetEnvironmentVariable("BlobContainerName") ?? "order-requests";
+            Environment.GetEnvironmentVariable("BlobContainerName")
+            ?? "order-requests";
 
-        var containerClient =
-            new BlobContainerClient(connectionString, containerName);
+        var blobServiceClient = new BlobServiceClient(storageConnectionString);
+        var containerClient = blobServiceClient.GetBlobContainerClient(containerName);
 
         await containerClient.CreateIfNotExistsAsync();
 
-        var blobName =
-            $"order-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}.json";
+        var orderRequest = JsonSerializer.Deserialize<OrderReservationRequest>(
+            message,
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
 
-        await containerClient.UploadBlobAsync(blobName, BinaryData.FromString(body));
+        if (orderRequest == null)
+        {
+            throw new InvalidOperationException("Invalid order reservation message.");
+        }
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteStringAsync(blobName);
+        var fileName = $"order-{orderRequest.OrderId}-{DateTime.UtcNow:yyyyMMddHHmmss}.json";
+        var blobClient = containerClient.GetBlobClient(fileName);
 
-        return response;
+        await blobClient.UploadAsync(BinaryData.FromString(message), overwrite: true);
+
+        _logger.LogInformation("Order request uploaded to Blob Storage: {FileName}", fileName);
     }
+}
+
+public class OrderReservationRequest
+{
+    public int OrderId { get; set; }
+    public List<OrderReservationItem> Items { get; set; } = new();
+}
+
+public class OrderReservationItem
+{
+    public int ItemId { get; set; }
+    public int Quantity { get; set; }
 }
